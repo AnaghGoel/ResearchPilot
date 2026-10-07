@@ -1,29 +1,20 @@
 import streamlit as st
+
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableParallel,RunnableSequence
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+from pydantic import BaseModel
 from typing import Optional
-from pydantic import BaseModel, Field
+
+
+# -----------------------------
+# Configuration
+# -----------------------------
 
 load_dotenv()
-
-llm=ChatGoogleGenerativeAI(model="gemini-3.6-flash",temperature=1)
-import os
-
-print(os.getenv("GOOGLE_API_KEY"))
-
-class ResearchReport(BaseModel):
-    title: str=Field(description="The title of the research report")
-    introduction: str=Field(description="Give a breif description about the research report")
-    problem: str=Field(description="The problem statement of the research report")
-    key_idea: str=Field(description="The key idea of the research report")
-    methodology: str=Field(description="The methodology used in the research report")
-    findings: str=Field(description="The findings of the research report")
-    conclusion: str=Field(description="The conclusion of the research report")
-    important_concepts: list[str]=Field(default=None,description="Highlight the important 5 concepts of the research report in bullet points")
-    strengths: Optional[list[str]] = None
-    limitations: Optional[list[str]] = None
-
 
 st.set_page_config(
     page_title="ResearchPilot",
@@ -31,50 +22,135 @@ st.set_page_config(
     layout="wide"
 )
 
-structured_llm=llm.with_structured_output(ResearchReport)
 
-prompt=PromptTemplate(template=
-    """
-    You are an expert research assistant.
+# -----------------------------
+# Structured Output Model
+# -----------------------------
 
-    Analyze the following research material and create a structured
-    research report.
+class ResearchReport(BaseModel):
+    title: str
+    introduction: str
+    problem: str
+    key_idea: str
+    methodology: str
+    findings: str
+    conclusion: str
+    important_concepts: list[str]
+    strengths: Optional[list[str]] = None
+    limitations: Optional[list[str]] = None
 
-    Research material:
-    {research_text}
 
-    Follow these requirements:
+# -----------------------------
+# LLM
+# -----------------------------
 
-    1. Give a suitable title.
-    2. Explain the introduction.
-    3. Clearly identify the problem being addressed.
-    4. Explain the key idea.
-    5. Explain the methodology.
-    6. Summarize the findings.
-    7. Give a concise conclusion.
-    8. Extract the most important concepts.
-    9. Mention strengths when they can be identified.
-    10. Mention limitations when they can be identified.
+llm = ChatGoogleGenerativeAI(
+    model="gemini-3.5-flash-lite",
+    temperature=0.7,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+)
+structured_llm = llm.with_structured_output(ResearchReport)
 
-    Do not invent information that is not present in the research material.
 
-    Research material:
-    {research_text}
-    """,
-    input_variables=["research_text"]
+# -----------------------------
+# Prompts
+# -----------------------------
+
+analysis_prompt = PromptTemplate(
+    template="""
+You are an expert research assistant.
+
+Analyze the following research material and create a structured
+research report.
+
+Explanation style: {style}
+Explanation length: {length}
+
+Research material:
+{research_text}
+
+Requirements:
+
+1. Give a suitable title.
+2. Explain the introduction.
+3. Identify the main problem.
+4. Explain the key idea.
+5. Explain the methodology.
+6. Summarize the findings.
+7. Give a conclusion.
+8. Extract important concepts.
+9. Mention strengths when identifiable.
+10. Mention limitations when identifiable.
+
+Do not invent information that is not present in the research material.
+""",
+    input_variables=["research_text", "style", "length"]
 )
 
-st.title("📚ResearchPilot")
 
-st.write("AI powered research assistant that helps you analyze research material and generate structured research reports.")
+summary_prompt = PromptTemplate(
+    template="""
+Summarize the following research material.
+
+Explanation style: {style}
+Explanation length: {length}
+
+Research material:
+{research_text}
+
+Give a clear and useful summary.
+""",
+    input_variables=["research_text", "style", "length"]
+)
+
+
+questions_prompt = PromptTemplate(
+    template="""
+Based on the following research material, generate 5 important
+questions that someone studying this topic should be able to answer.
+
+Research material:
+{research_text}
+
+Explanation style: {style}
+
+Give only the questions as a numbered list.
+""",
+    input_variables=["research_text", "style"]
+)
+
+# -----------------------------
+# Parallel Chain
+# -----------------------------
+
+research_chain = RunnableParallel({
+    'report': RunnableSequence(analysis_prompt, structured_llm),
+    'summary' : RunnableSequence(summary_prompt,llm,StrOutputParser()),
+    'questions': RunnableSequence(questions_prompt, llm, StrOutputParser())
+})
+
+
+# -----------------------------
+# Streamlit UI
+# -----------------------------
+
+st.title("📚 ResearchPilot")
+
+st.write(
+    "AI-powered research analysis and explanation assistant"
+)
 
 st.divider()
+
 
 research_text = st.text_area(
     "Paste your research paper / article / technical content",
     height=300,
     placeholder="Paste your research material here..."
 )
+
 
 col1, col2 = st.columns(2)
 
@@ -99,62 +175,101 @@ with col2:
         ]
     )
 
+
 analyze = st.button(
     "🔍 Analyze Research",
     type="primary"
 )
 
+
+# -----------------------------
+# Execute
+# -----------------------------
+
 if analyze:
 
     if not research_text.strip():
+
         st.warning("Please enter some research material.")
+
     else:
 
-        final_prompt = prompt.invoke({
-    "research_text": research_text
-})
+        input_data = {
+            "research_text": research_text,
+            "style": style,
+            "length": length
+        }
 
         with st.spinner("Analyzing research..."):
 
-            result = structured_llm.invoke(final_prompt)
+            result = research_chain.invoke(input_data)
 
         st.success("Research analysis completed!")
 
-        st.divider()
+        # -----------------------------
+        # Summary
+        # -----------------------------
 
-        st.header(result.title)
+        st.header("📌 Summary")
+
+        st.write(result["summary"])
+
+
+        # -----------------------------
+        # Detailed Report
+        # -----------------------------
+
+        st.header("📊 Detailed Report")
+
+        report = result["report"]
+
+        st.subheader(report.title)
 
         st.subheader("Introduction")
-        st.write(result.introduction)
+        st.write(report.introduction)
 
         st.subheader("Problem")
-        st.write(result.problem)
+        st.write(report.problem)
 
         st.subheader("Key Idea")
-        st.write(result.key_idea)
+        st.write(report.key_idea)
 
         st.subheader("Methodology")
-        st.write(result.methodology)
+        st.write(report.methodology)
 
         st.subheader("Findings")
-        st.write(result.findings)
+        st.write(report.findings)
 
         st.subheader("Important Concepts")
 
-        for concept in result.important_concepts:
+        for concept in report.important_concepts:
             st.markdown(f"- {concept}")
 
-        if result.strengths:
+
+        if report.strengths:
+
             st.subheader("Strengths")
 
-            for strength in result.strengths:
+            for strength in report.strengths:
                 st.markdown(f"- {strength}")
 
-        if result.limitations:
+
+        if report.limitations:
+
             st.subheader("Limitations")
 
-            for limitation in result.limitations:
+            for limitation in report.limitations:
                 st.markdown(f"- {limitation}")
 
+
         st.subheader("Conclusion")
-        st.write(result.conclusion)
+        st.write(report.conclusion)
+
+
+        # -----------------------------
+        # Study Questions
+        # -----------------------------
+
+        st.header("🎯 Study Questions")
+
+        st.markdown(result["questions"])
