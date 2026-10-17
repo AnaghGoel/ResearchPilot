@@ -397,12 +397,18 @@ The agent can combine sources, but always verify important facts against the ori
 
 **Anagh Goel** — [GitHub](https://github.com/AnaghGoel)
 
-## 📄 License
+## License
 
-No license file is currently included in the repository. Unless a license is added, reuse and redistribution are not automatically granted.
+This project is licensed under the [MIT License](LICENSE).
+
+Copyright (c) 2026 Anagh Goel
+
+You are free to use, modify, and distribute this software in accordance with the MIT License. See the `LICENSE` file for the full terms.
 
 ---
 
 <p align="center">
   Built to make dense research material easier to explore, understand, and learn from.
 </p>
+
+
